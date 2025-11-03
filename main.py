@@ -10,14 +10,13 @@ import sys
 #              0. الإعدادات والثوابت والتهيئة
 # ===============================================
 
-# قراءة المتغيرات البيئية
 BOT_TOKEN = os.getenv("BOT_TOKEN") 
 WEBHOOK_PORT = int(os.environ.get('PORT', 5000))
 WEBHOOK_URL_BASE = os.getenv("WEBHOOK_URL") 
 WEBHOOK_URL_PATH = "/{}".format(BOT_TOKEN)
 
 DEVELOPER_USER_ID = "1315011160"
-CHANNEL_USERNAME = "@SuPeRx1" # سيظهر بدون @ في الكابشن
+CHANNEL_USERNAME = "@SuPeRx1"
 
 TIKTOK_API = 'https://dev-broksuper.pantheonsite.io/api/e/mp3.php?url='
 INSTAGRAM_API = 'https://dev-broksuper.pantheonsite.io/api/ink.php?url='
@@ -34,12 +33,16 @@ except Exception as e:
     sys.exit(1)
 
 # ===============================================
-#              1. نقاط وصول Webhook
+#              0.1 إدارة حالة المستخدم
+# ===============================================
+user_states = {}  # key=chat_id, value=platform ('tiktok' أو 'instagram')
+
+# ===============================================
+#              1. Webhook
 # ===============================================
 
 @app.route(WEBHOOK_URL_PATH, methods=['POST'])
 def webhook():
-    """نقطة النهاية التي يستقبل منها البوت تحديثات تيليجرام."""
     if request.headers.get('content-type') == 'application/json':
         json_string = request.get_data().decode('utf-8')
         update = telebot.types.Update.de_json(json_string)
@@ -49,13 +52,11 @@ def webhook():
         return '!', 403
 
 # ===============================================
-#              2. معالجة الأوامر الرئيسية (HTML)
+#              2. أوامر البوت
 # ===============================================
 
 @bot.message_handler(commands=["start"])
 def send_welcome(message):
-    """يرسل رسالة الترحيب وقائمة الخيارات باستخدام HTML لضمان الثبات."""
-    
     first_name = message.from_user.first_name
     
     markup = types.InlineKeyboardMarkup(row_width=2)
@@ -68,51 +69,71 @@ def send_welcome(message):
     bot.send_message(
         message.chat.id,
         f"""
-        <b>مرحباً بك {first_name}!</b> 👋
-        
-        أنا بوت التحميل الشامل. اختر المنصة التي تريد التحميل منها:
-        * اختر من القائمة أدناه وأرسل <b>الرابط فوراً</b>.
+<b>مرحباً بك {first_name}!</b> 👋
+
+أنا بوت التحميل الشامل. اختر المنصة التي تريد التحميل منها:
+* اختر من القائمة أدناه وأرسل <b>الرابط فوراً</b>.
         """,
         parse_mode='HTML', 
         reply_markup=markup
     )
 
 # ===============================================
-#              3. معالجة الـ Callback و الدوال
+#              3. التعامل مع Inline Buttons
 # ===============================================
 
 @bot.callback_query_handler(func=lambda call: call.data in ['download_tiktok', 'download_instagram'])
 def handle_download_choice(call):
     platform = "تيك توك" if call.data == 'download_tiktok' else "إنستجرام"
+    
+    # حفظ حالة المستخدم
+    user_states[call.message.chat.id] = call.data
+    
     bot.edit_message_text(
         chat_id=call.message.chat.id,
         message_id=call.message.message_id,
-        text=f"""
-        <b>🚀 أرسل رابط فيديو {platform} الآن!</b>
-        """,
-        parse_mode='HTML' # تم التعديل إلى HTML لضمان الثبات
+        text=f"<b>🚀 أرسل رابط فيديو {platform} الآن!</b>",
+        parse_mode='HTML'
     )
-    if call.data == 'download_tiktok':
-        bot.register_next_step_handler(call.message, process_tiktok_link)
-    elif call.data == 'download_instagram':
-        bot.register_next_step_handler(call.message, process_instagram_link)
-        
+
+# ===============================================
+#              4. معالجة الرسائل بعد اختيار المنصة
+# ===============================================
+
+@bot.message_handler(func=lambda message: message.chat.id in user_states)
+def process_link(message):
+    platform_choice = user_states.pop(message.chat.id, None)
+    
+    if not platform_choice:
+        bot.send_message(message.chat.id, "❌ حدث خطأ. حاول من جديد.", parse_mode='HTML')
+        send_welcome(message)
+        return
+    
+    if platform_choice == 'download_tiktok':
+        process_tiktok_link(message)
+    elif platform_choice == 'download_instagram':
+        process_instagram_link(message)
+
+# ===============================================
+#              5. دوال التحميل
+# ===============================================
+
 def process_tiktok_link(message):
     user_url = message.text
     loading_msg = None
     
     if user_url.startswith('/'):
-        bot.send_message(message.chat.id, "❌ تم إلغاء عملية التحميل. يرجى البدء من جديد واختيار المنصة أولاً.", parse_mode='HTML')
+        bot.send_message(message.chat.id, "❌ تم إلغاء عملية التحميل. يرجى البدء من جديد.", parse_mode='HTML')
         send_welcome(message) 
         return
         
     try:
         if not re.match(r'https?://(?:www\.)?tiktok\.com/', user_url):
-            bot.send_message(message.chat.id, "<b>❌ الرابط غير صالح!</b> يرجى التأكد من إرسال رابط تيك توك صحيح.", parse_mode='HTML')
+            bot.send_message(message.chat.id, "<b>❌ الرابط غير صالح!</b>", parse_mode='HTML')
             send_welcome(message) 
             return
             
-        loading_msg = bot.send_message(message.chat.id, "<strong>⏳ جارٍ التحميل من تيك توك... يرجى الانتظار.</strong>", parse_mode="html")
+        loading_msg = bot.send_message(message.chat.id, "<strong>⏳ جارٍ التحميل من تيك توك...</strong>", parse_mode="HTML")
         
         response = requests.get(f'{TIKTOK_API}{user_url}', timeout=20).json()
         video_url = response.get("video", {}).get("videoURL")
@@ -120,7 +141,6 @@ def process_tiktok_link(message):
         
         bot.delete_message(message.chat.id, loading_msg.message_id)
         
-        # الكابشن يمكن أن يحتوي على مشاكل تنسيق، لذا نستخدم HTML هنا أيضاً
         caption_text = f"✅ تم التحميل بواسطة: {CHANNEL_USERNAME}" 
         
         if video_url:
@@ -130,33 +150,33 @@ def process_tiktok_link(message):
             bot.send_voice(message.chat.id, audio_url, caption=f'<b>🎧 {caption_text}</b>', parse_mode='HTML')
             
         if not video_url and not audio_url:
-             bot.send_message(message.chat.id, "❌ لم يتم العثور على محتوى للتحميل. تأكد من أن الرابط عام.", parse_mode='HTML')
+             bot.send_message(message.chat.id, "❌ لم يتم العثور على محتوى للتحميل.", parse_mode='HTML')
     
     except Exception as e:
         print(f"Error in TikTok: {e}")
         if loading_msg:
              try: bot.delete_message(message.chat.id, loading_msg.message_id) 
              except: pass 
-        bot.send_message(message.chat.id, "❌ حدث خطأ أثناء التحميل. تأكد من الرابط أو حاول لاحقاً.", parse_mode='HTML')
+        bot.send_message(message.chat.id, "❌ حدث خطأ أثناء التحميل.", parse_mode='HTML')
         
-    bot.send_message(message.chat.id, "اضغط على الأمر /start للعودة إلى القائمة الرئيسية.", parse_mode='HTML')
+    bot.send_message(message.chat.id, "اضغط على /start للعودة إلى القائمة الرئيسية.", parse_mode='HTML')
 
 
 def process_instagram_link(message):
     user_url = message.text
     loading_msg = None
     if user_url.startswith('/'):
-        bot.send_message(message.chat.id, "❌ تم إلغاء عملية التحميل. يرجى البدء من جديد واختيار المنصة أولاً.", parse_mode='HTML')
+        bot.send_message(message.chat.id, "❌ تم إلغاء عملية التحميل. يرجى البدء من جديد.", parse_mode='HTML')
         send_welcome(message) 
         return
         
     try:
         if not re.match(r'https?://(?:www\.)?instagram\.com/', user_url):
-            bot.send_message(message.chat.id, "<b>❌ الرابط غير صالح!</b> يرجى التأكد من إرسال رابط إنستجرام صحيح.", parse_mode='HTML')
+            bot.send_message(message.chat.id, "<b>❌ الرابط غير صالح!</b>", parse_mode='HTML')
             send_welcome(message)
             return
 
-        loading_msg = bot.send_message(message.chat.id, f"""<strong>⏳ جارٍ التحميل من إنستجرام... يرجى الانتظار.</strong>""", parse_mode="html")
+        loading_msg = bot.send_message(message.chat.id, "<strong>⏳ جارٍ التحميل من إنستجرام...</strong>", parse_mode="HTML")
         
         response = requests.get(f"{INSTAGRAM_API}{user_url}", timeout=20).json()
         media_url = response.get('media')
@@ -168,20 +188,20 @@ def process_instagram_link(message):
         if media_url:
             bot.send_video(message.chat.id, media_url, caption=f"<b>{caption_text}</b>", parse_mode='HTML')
         else:
-            bot.send_message(message.chat.id, "❌ لم يتم العثور على وسائط في الرابط. قد يكون الرابط خاصاً أو غير صحيح.", parse_mode='HTML')
+            bot.send_message(message.chat.id, "❌ لم يتم العثور على وسائط في الرابط.", parse_mode='HTML')
 
     except Exception as e:
         print(f"Error in Instagram: {e}")
         if loading_msg:
              try: bot.delete_message(message.chat.id, loading_msg.message_id) 
              except: pass 
-        bot.send_message(message.chat.id, "❌ حدث خطأ أثناء التحميل. تأكد من الرابط أو حاول لاحقاً.", parse_mode='HTML')
+        bot.send_message(message.chat.id, "❌ حدث خطأ أثناء التحميل.", parse_mode='HTML')
         
-    bot.send_message(message.chat.id, "اضغط على الأمر /start للعودة إلى القائمة الرئيسية.", parse_mode='HTML')
+    bot.send_message(message.chat.id, "اضغط على /start للعودة إلى القائمة الرئيسية.", parse_mode='HTML')
 
 
 # ===============================================
-#              4. تشغيل Webhook
+#              6. تشغيل Webhook
 # ===============================================
 
 if __name__ == '__main__':
