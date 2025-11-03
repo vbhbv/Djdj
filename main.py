@@ -1,13 +1,13 @@
 import requests
 import telebot
 from telebot import types
-from flask import Flask, request # استيراد Flask
+from flask import Flask, request # لعمل Webhook
 import re 
 import os 
 import sys
 
 # ===============================================
-#              0. دالة مساعدة وتأمين النصوص
+#              0. دالة مساعدة لتأمين النصوص (لـ MarkdownV2 في الكابشن فقط)
 # ===============================================
 def escape_markdown_v2(text):
     """تؤمن النص ليتناسب مع تنسيق MarkdownV2 بتأمين الرموز الخاصة."""
@@ -20,9 +20,7 @@ def escape_markdown_v2(text):
 
 # قراءة المتغيرات البيئية الضرورية
 BOT_TOKEN = os.getenv("BOT_TOKEN") 
-# المنفذ الذي توفره Railway لتشغيل الخادم (عادةً 5000)
 WEBHOOK_PORT = int(os.environ.get('PORT', 5000))
-# URL الخاص بالخدمة على Railway (يجب إعداده كمتغير بيئي)
 WEBHOOK_URL_BASE = os.getenv("WEBHOOK_URL") 
 WEBHOOK_URL_PATH = "/{}".format(BOT_TOKEN)
 
@@ -32,14 +30,13 @@ CHANNEL_USERNAME = "@SuPeRx1"
 TIKTOK_API = 'https://dev-broksuper.pantheonsite.io/api/e/mp3.php?url='
 INSTAGRAM_API = 'https://dev-broksuper.pantheonsite.io/api/ink.php?url='
 
-# التحقق من وجود المتغيرات
 if not BOT_TOKEN or not WEBHOOK_URL_BASE:
     print("❌ خطأ: يجب تعيين متغيرات BOT_TOKEN و WEBHOOK_URL!")
     sys.exit(1) 
 
 try:
     bot = telebot.TeleBot(BOT_TOKEN)
-    app = Flask(__name__) # تهيئة تطبيق Flask
+    app = Flask(__name__) 
 except Exception as e:
     print(f"❌ فشل تهيئة البوت/Flask. الخطأ: {e}")
     sys.exit(1)
@@ -57,34 +54,40 @@ def webhook():
         bot.process_new_updates([update])
         return '!', 200
     else:
-        # رفض الطلبات غير الصحيحة
         return '!', 403
 
 # ===============================================
-#              3. معالجة الأوامر والوظائف (بدون تغيير)
+#              3. معالجة الأوامر الرئيسية (تم التعديل لـ HTML)
 # ===============================================
 
 @bot.message_handler(commands=["start"])
 def send_welcome(message):
-    """يرسل رسالة الترحيب وقائمة الخيارات."""
-    safe_first_name = escape_markdown_v2(message.from_user.first_name)
+    """يرسل رسالة الترحيب وقائمة الخيارات باستخدام HTML لضمان الثبات."""
+    
+    first_name = message.from_user.first_name
+    
     markup = types.InlineKeyboardMarkup(row_width=2)
     tt_btn = types.InlineKeyboardButton("تحميل تيك توك 🎶", callback_data="download_tiktok")
     ig_btn = types.InlineKeyboardButton("تحميل إنستجرام 📸", callback_data="download_instagram")
     dev_btn = types.InlineKeyboardButton("المطور 👨‍💻", url=f"tg://user?id={DEVELOPER_USER_ID}")
+    
     markup.add(tt_btn, ig_btn, dev_btn)
     
     bot.send_message(
         message.chat.id,
-        fr"""
-        **مرحباً بك {safe_first_name}\!** 👋
+        f"""
+        <b>مرحباً بك {first_name}!</b> 👋
         
-        أنا بوت التحميل الشامل\. اختر المنصة التي تريد التحميل منها:
-        \* اختر من القائمة أدناه وأرسل **الرابط فوراً**\.
+        أنا بوت التحميل الشامل. اختر المنصة التي تريد التحميل منها:
+        * اختر من القائمة أدناه وأرسل <b>الرابط فوراً</b>.
         """,
-        parse_mode='MarkdownV2',
+        parse_mode='HTML', # *** تم التعديل إلى HTML ***
         reply_markup=markup
     )
+
+# ===============================================
+#              4. معالجة الـ Callback و الدوال (مع MarkdownV2 في الأماكن الآمنة)
+# ===============================================
 
 @bot.callback_query_handler(func=lambda call: call.data in ['download_tiktok', 'download_instagram'])
 def handle_download_choice(call):
@@ -102,10 +105,12 @@ def handle_download_choice(call):
     elif call.data == 'download_instagram':
         bot.register_next_step_handler(call.message, process_instagram_link)
         
-
 def process_tiktok_link(message):
+    """تحميل الفيديو والصوت من رابط تيك توك."""
     user_url = message.text
     loading_msg = None
+    
+    # تحقق من إلغاء العملية
     if user_url.startswith('/'):
         bot.send_message(message.chat.id, r"❌ تم إلغاء عملية التحميل\. يرجى البدء من جديد واختيار المنصة أولاً\.", parse_mode='MarkdownV2')
         send_welcome(message) 
@@ -118,6 +123,7 @@ def process_tiktok_link(message):
             return
             
         loading_msg = bot.send_message(message.chat.id, "<strong>⏳ جارٍ التحميل من تيك توك... يرجى الانتظار.</strong>", parse_mode="html")
+        
         response = requests.get(f'{TIKTOK_API}{user_url}', timeout=20).json()
         video_url = response.get("video", {}).get("videoURL")
         audio_url = response.get("audioURL")
@@ -144,6 +150,7 @@ def process_tiktok_link(message):
 
 
 def process_instagram_link(message):
+    """تحميل الفيديو/الصورة من رابط إنستجرام."""
     user_url = message.text
     loading_msg = None
     if user_url.startswith('/'):
@@ -180,7 +187,7 @@ def process_instagram_link(message):
 
 
 # ===============================================
-#              4. تشغيل Webhook
+#              5. تشغيل Webhook
 # ===============================================
 
 if __name__ == '__main__':
