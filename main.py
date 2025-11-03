@@ -13,7 +13,8 @@ import sys
 # قراءة المتغيرات البيئية
 BOT_TOKEN = os.getenv("BOT_TOKEN") 
 WEBHOOK_URL_BASE = os.getenv("WEBHOOK_URL") 
-WEBHOOK_URL_PATH = "/{}".format(BOT_TOKEN)
+# استخدام المسار المعتاد /التوكن لضمان الأمان والوضوح
+WEBHOOK_URL_PATH = "/{}".format(BOT_TOKEN) 
 
 DEVELOPER_USER_ID = "1315011160"
 CHANNEL_USERNAME = "@SuPeRx1"
@@ -28,25 +29,32 @@ if not BOT_TOKEN or not WEBHOOK_URL_BASE:
 # التهيئة
 try:
     bot = telebot.TeleBot(BOT_TOKEN)
-    app = Flask(__name__) # تم تعريف تطبيق Flask
+    app = Flask(__name__) 
 except Exception as e:
     print(f"❌ فشل تهيئة البوت/Flask. الخطأ: {e}")
 
 # ===============================================
-#              1. نقاط وصول Webhook (تم التعديل)
+#              1. نقاط وصول Webhook (ULTRA-STABLE)
 # ===============================================
 
 @app.route(WEBHOOK_URL_PATH, methods=['POST'])
 def webhook():
     """نقطة النهاية التي يستقبل منها البوت تحديثات تيليجرام."""
+    # الرد الفوري بـ 200 OK هو الأهم لتيليجرام، حتى لو حدث خطأ داخلي.
+    
     if request.headers.get('content-type') == 'application/json':
-        json_string = request.get_data().decode('utf-8')
+        try:
+            json_string = request.get_data().decode('utf-8')
+            
+            # معالجة الرسالة
+            update = telebot.types.Update.de_json(json_string)
+            bot.process_new_updates([update])
         
-        # معالجة الرسالة
-        update = telebot.types.Update.de_json(json_string)
-        bot.process_new_updates([update])
-        
-        # الرد بأسرع طريقة ممكنة لضمان عدم حدوث تأخير في Webhook
+        except Exception as e:
+            # طباعة الخطأ في سجلات Railway لمعرفته، لكن عدم انهيار الخادم
+            print(f"❌ خطأ حرج في معالجة Webhook: {e}")
+            
+        # نعود دائماً بـ 200 OK لمنع تيليجرام من تكرار الطلب ومنع 502
         return '', 200 
     else:
         return 'Error', 403
@@ -191,7 +199,7 @@ if __name__ == '__main__':
     # إزالة أي Webhook قديم
     bot.remove_webhook()
     
-    # إعداد Webhook الجديد
+    # إعداد Webhook الجديد بالمسار الآمن
     bot.set_webhook(url=WEBHOOK_URL_BASE + WEBHOOK_URL_PATH)
     
     # لن نستخدم app.run()، لأن Gunicorn هو من سيقوم بالتشغيل
