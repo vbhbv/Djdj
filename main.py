@@ -12,7 +12,6 @@ import sys
 
 # قراءة المتغيرات البيئية
 BOT_TOKEN = os.getenv("BOT_TOKEN") 
-WEBHOOK_PORT = int(os.environ.get('PORT', 5000))
 WEBHOOK_URL_BASE = os.getenv("WEBHOOK_URL") 
 WEBHOOK_URL_PATH = "/{}".format(BOT_TOKEN)
 
@@ -24,15 +23,19 @@ INSTAGRAM_API = 'https://dev-broksuper.pantheonsite.io/api/ink.php?url='
 API_TIMEOUT = 20
 
 if not BOT_TOKEN or not WEBHOOK_URL_BASE:
+    # هذا التحقق ضروري لضمان أن المتغيرات مضبوطة
     print("❌ خطأ: يجب تعيين متغيرات BOT_TOKEN و WEBHOOK_URL بشكل كامل!")
-    sys.exit(1) 
-
+    # لن نخرج من التطبيق هنا، لأن Gunicorn يتوقع أن يتم تعريف التطبيق
+    
+# التهيئة
 try:
     bot = telebot.TeleBot(BOT_TOKEN)
-    app = Flask(__name__) 
+    app = Flask(__name__) # تم تعريف تطبيق Flask
 except Exception as e:
+    # هذا قد يحدث إذا كان التوكن غير صحيح، لكن Gunicorn قد يعترض قبلها
     print(f"❌ فشل تهيئة البوت/Flask. الخطأ: {e}")
-    sys.exit(1)
+    # لن نخرج من التطبيق، لكن سنترك Gunicorn يشغله ليرى الخطأ بوضوح
+    # sys.exit(1)
 
 # ===============================================
 #              1. نقاط وصول Webhook
@@ -45,7 +48,7 @@ def webhook():
         json_string = request.get_data().decode('utf-8')
         update = telebot.types.Update.de_json(json_string)
         bot.process_new_updates([update])
-        return '!', 200
+        return '!', 200 # رد فوري بنجاح الاستقبال
     else:
         return '!', 403
 
@@ -62,7 +65,8 @@ def send_welcome(message):
     markup = types.InlineKeyboardMarkup(row_width=2)
     tt_btn = types.InlineKeyboardButton("تحميل تيك توك 🎶", callback_data="download_tiktok")
     ig_btn = types.InlineKeyboardButton("تحميل إنستجرام 📸", callback_data="download_instagram")
-    dev_btn = types.InlineKeyboardButton("المطور 👨‍💻", url=f"tg://user?id={DEVELOPER_USER_ID}")
+    # استخدام tg://user?id لزر المطور
+    dev_btn = types.InlineKeyboardButton("المطور 👨‍💻", url=f"tg://user?id={DEVELOPER_USER_ID}") 
     
     markup.add(tt_btn, ig_btn, dev_btn)
     
@@ -181,9 +185,10 @@ def process_instagram_link(message):
 
 
 # ===============================================
-#              4. تشغيل Webhook
+#              4. تهيئة Webhook
 # ===============================================
 
+# يتم وضع هذا الكود في نهاية الملف لتهيئة Webhook، بينما يقوم Gunicorn بالتشغيل.
 if __name__ == '__main__':
     # إزالة أي Webhook قديم
     bot.remove_webhook()
@@ -191,6 +196,5 @@ if __name__ == '__main__':
     # إعداد Webhook الجديد
     bot.set_webhook(url=WEBHOOK_URL_BASE + WEBHOOK_URL_PATH)
     
-    # بدء تشغيل Flask للسماح بـ Telegram بإرسال التحديثات إلى نقطة الوصول
-    print(f'✅ البوت يعمل الآن في وضع Webhook على المنفذ: {WEBHOOK_PORT}...')
-    app.run(host='0.0.0.0', port=WEBHOOK_PORT)
+    # لن نستخدم app.run()، لأن Gunicorn هو من سيقوم بالتشغيل
+    print('✅ البوت جاهز للتشغيل بواسطة Gunicorn على Python 3.10...')
