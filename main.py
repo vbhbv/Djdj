@@ -39,6 +39,7 @@ user_states = {}  # key=chat_id, value=platform ('tiktok' أو 'instagram')
 
 @app.route(WEBHOOK_URL_PATH, methods=["POST"])
 def webhook():
+    print("🔔 استلمت طلب Webhook")  # تأكد أن Webhook يستقبل الطلبات
     if request.headers.get("content-type") == "application/json":
         json_string = request.get_data().decode("utf-8")
         update = telebot.types.Update.de_json(json_string)
@@ -175,11 +176,11 @@ def process_instagram_link(message):
     bot.send_message(message.chat.id, "اضغط على /start للعودة للقائمة الرئيسية.", parse_mode="HTML")
 
 # ===============================================
-# 6. تشغيل Webhook على Railway
+# 6. تشغيل Webhook على Railway مع threaded=True
 # ===============================================
 
 if __name__ == "__main__":
     bot.remove_webhook()
     bot.set_webhook(url=WEBHOOK_URL_BASE + WEBHOOK_URL_PATH)
     print(f"✅ Webhook مضبوط: {WEBHOOK_URL_BASE + WEBHOOK_URL_PATH}")
-    app.run(host="0.0.0.0", port=WEBHOOK_PORT)
+    app.run(host="0.0.0.0", port=WEBHOOK_PORT, threaded=True)
