@@ -1,188 +1,231 @@
+import logging
 import requests
-import telebot
-from telebot import types
-from flask import Flask, request
-import re
 import os
 import sys
-from threading import Thread
+import re
+
+from aiogram import Bot, Dispatcher, types, F
+from aiogram.enums import ParseMode
+from aiogram.filters import CommandStart
+from aiogram.utils.keyboard import InlineKeyboardBuilder
+from aiohttp import web # يستخدم لتشغيل Webhook
 
 # ===============================================
-# 0. الإعدادات الأساسية
+#              0. الإعدادات والثوابت والتهيئة
 # ===============================================
 
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-WEBHOOK_URL_BASE = os.getenv("WEBHOOK_URL")  # مثال: https://web-production-4979.up.railway.app
-WEBHOOK_URL_PATH = f"/{BOT_TOKEN}"  # Telegram سيرسل POST على هذا المسار
-WEBHOOK_PORT = int(os.environ.get("PORT", 5000))
+# إعدادات Webhook والتوكن (يجب أن تكون مضبوطة في Railway Variables)
+BOT_TOKEN = os.getenv("BOT_TOKEN") 
+WEBHOOK_URL_BASE = os.getenv("WEBHOOK_URL") 
+WEBHOOK_PATH = f'/{BOT_TOKEN}'
 
-DEVELOPER_USER_ID = "1315011160"
+# إعدادات ثابتة
+DEVELOPER_USER_ID = 1315011160 # تم تحويله إلى رقم لـ aiogram
 CHANNEL_USERNAME = "@SuPeRx1"
 
-TIKTOK_API = "https://dev-broksuper.pantheonsite.io/api/e/mp3.php?url="
-INSTAGRAM_API = "https://dev-broksuper.pantheonsite.io/api/ink.php?url="
+TIKTOK_API = 'https://dev-broksuper.pantheonsite.io/api/e/mp3.php?url='
+INSTAGRAM_API = 'https://dev-broksuper.pantheonsite.io/api/ink.php?url='
+API_TIMEOUT = 25 # زيادة المهلة الزمنية للتحميل
 
+# التحقق من المتغيرات
 if not BOT_TOKEN or not WEBHOOK_URL_BASE:
-    print("❌ خطأ: يجب تعيين BOT_TOKEN و WEBHOOK_URL!")
+    print("❌ خطأ: يجب تعيين متغيرات BOT_TOKEN و WEBHOOK_URL بشكل كامل!")
     sys.exit(1)
 
-bot = telebot.TeleBot(BOT_TOKEN)
-app = Flask(__name__)
+# إعداد التسجيل (Logging)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(name)s - %(message)s")
 
 # ===============================================
-# 0.1 إدارة حالة المستخدم
-# ===============================================
-user_states = {}  # key=chat_id, value=platform ('tiktok' أو 'instagram')
-
-# ===============================================
-# 1. Webhook endpoint مع Thread
+#              1. تهيئة البوت والموزع (Dispatcher)
 # ===============================================
 
-@app.route(WEBHOOK_URL_PATH, methods=["POST"])
-def webhook():
-    if request.headers.get("content-type") == "application/json":
-        json_string = request.get_data().decode("utf-8")
-        update = telebot.types.Update.de_json(json_string)
-        # معالجة التحديث في Thread منفصل
-        Thread(target=lambda: bot.process_new_updates([update])).start()
-        print("🔔 استلمت طلب Webhook")
-        return "!", 200
-    else:
-        return "!", 403
+bot = Bot(token=BOT_TOKEN, parse_mode=ParseMode.HTML) # استخدام HTML افتراضياً
+dp = Dispatcher()
 
 # ===============================================
-# 2. /start
+#              2. دوال بناء الواجهة
 # ===============================================
 
-@bot.message_handler(commands=["start"])
-def send_welcome(message):
-    first_name = message.from_user.first_name
+def build_main_keyboard():
+    """بناء لوحة مفاتيح الأزرار الرئيسية."""
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        types.InlineKeyboardButton(text="تحميل تيك توك 🎶", callback_data="download_tiktok"),
+        types.InlineKeyboardButton(text="تحميل إنستجرام 📸", callback_data="download_instagram")
+    )
+    builder.row(
+        types.InlineKeyboardButton(text="المطور 👨‍💻", url=f"tg://user?id={DEVELOPER_USER_ID}")
+    )
+    return builder.as_markup()
 
-    markup = types.InlineKeyboardMarkup(row_width=2)
-    tt_btn = types.InlineKeyboardButton("تحميل تيك توك 🎶", callback_data="download_tiktok")
-    ig_btn = types.InlineKeyboardButton("تحميل إنستجرام 📸", callback_data="download_instagram")
-    dev_btn = types.InlineKeyboardButton("المطور 👨‍💻", url=f"tg://user?id={DEVELOPER_USER_ID}")
-    markup.add(tt_btn, ig_btn, dev_btn)
+# ===============================================
+#              3. معالجة الأوامر الرئيسية (Command /start)
+# ===============================================
 
-    bot.send_message(
-        message.chat.id,
+@dp.message(CommandStart())
+async def command_start_handler(message: types.Message):
+    """الرد على أمر /start باستخدام HTML لضمان الثبات."""
+    
+    first_name = message.from_user.first_name if message.from_user else "صديقنا"
+    
+    await message.answer(
         f"""
-<b>مرحباً بك {first_name}!</b> 👋
-
-أنا بوت التحميل الشامل. اختر المنصة التي تريد التحميل منها:
-* اختر من القائمة أدناه وأرسل <b>الرابط فوراً</b>.
+        <b>مرحباً بك {first_name}!</b> 👋
+        
+        أنا بوت التحميل الشامل. اختر المنصة التي تريد التحميل منها:
+        * اختر من القائمة أدناه وأرسل <b>الرابط فوراً</b>.
         """,
-        parse_mode="HTML",
-        reply_markup=markup,
+        reply_markup=build_main_keyboard()
     )
 
 # ===============================================
-# 3. التعامل مع Inline Buttons
+#              4. معالجة ضغطات الأزرار (Callbacks)
 # ===============================================
 
-@bot.callback_query_handler(func=lambda call: call.data in ["download_tiktok", "download_instagram"])
-def handle_download_choice(call):
-    platform = "تيك توك" if call.data == "download_tiktok" else "إنستجرام"
-    user_states[call.message.chat.id] = call.data
-    bot.edit_message_text(
-        chat_id=call.message.chat.id,
-        message_id=call.message.message_id,
-        text=f"<b>🚀 أرسل رابط فيديو {platform} الآن!</b>",
-        parse_mode="HTML",
+@dp.callback_query(F.data == "download_tiktok")
+async def process_tiktok_choice(callback: types.CallbackQuery, state: F.data):
+    """معالجة اختيار تحميل تيك توك."""
+    await callback.message.edit_text(
+        "<b>🚀 أرسل رابط فيديو تيك توك الآن!</b>",
+        parse_mode=ParseMode.HTML
     )
+    # تسجيل الخطوة التالية (aiogram يستخدم طريقة مختلفة لانتظار الرسالة)
+    dp.message.register(handle_tiktok_link, F.text, callback_data=callback.data)
+    await callback.answer() # إغلاق إشعار الزر
+
+@dp.callback_query(F.data == "download_instagram")
+async def process_instagram_choice(callback: types.CallbackQuery, state: F.data):
+    """معالجة اختيار تحميل إنستجرام."""
+    await callback.message.edit_text(
+        "<b>🚀 أرسل رابط فيديو إنستجرام الآن!</b>",
+        parse_mode=ParseMode.HTML
+    )
+    # تسجيل الخطوة التالية
+    dp.message.register(handle_instagram_link, F.text, callback_data=callback.data)
+    await callback.answer() # إغلاق إشعار الزر
+
 
 # ===============================================
-# 4. معالجة الرابط بعد اختيار المنصة
+#              5. دوال التحميل (Asynchronous Handling)
 # ===============================================
 
-@bot.message_handler(func=lambda message: message.chat.id in user_states)
-def process_link(message):
-    platform_choice = user_states.pop(message.chat.id, None)
-    if not platform_choice:
-        bot.send_message(message.chat.id, "❌ حدث خطأ. حاول من جديد.", parse_mode="HTML")
-        send_welcome(message)
-        return
-
-    if platform_choice == "download_tiktok":
-        process_tiktok_link(message)
-    elif platform_choice == "download_instagram":
-        process_instagram_link(message)
-
-# ===============================================
-# 5. دوال التحميل
-# ===============================================
-
-def process_tiktok_link(message):
+async def handle_tiktok_link(message: types.Message):
+    """تحميل الفيديو والصوت من رابط تيك توك."""
     user_url = message.text
-    loading_msg = None
-    if user_url.startswith("/"):
-        bot.send_message(message.chat.id, "❌ تم إلغاء العملية.", parse_mode="HTML")
-        send_welcome(message)
+    
+    if user_url.startswith('/'):
+        await message.answer("❌ تم إلغاء عملية التحميل. اضغط /start للعودة.")
         return
-    try:
-        if not re.match(r"https?://(?:www\.)?tiktok\.com/", user_url):
-            bot.send_message(message.chat.id, "<b>❌ الرابط غير صالح!</b>", parse_mode="HTML")
-            send_welcome(message)
-            return
 
-        loading_msg = bot.send_message(message.chat.id, "<b>⏳ جارٍ التحميل من تيك توك...</b>", parse_mode="HTML")
-        response = requests.get(f"{TIKTOK_API}{user_url}", timeout=20).json()
+    if not re.match(r'https?://(?:www\.)?tiktok\.com/', user_url):
+        await message.answer("<b>❌ الرابط غير صالح!</b> يرجى التأكد من إرسال رابط تيك توك صحيح.", parse_mode=ParseMode.HTML)
+        await command_start_handler(message) 
+        return
+
+    loading_msg = await message.answer("<strong>⏳ جارٍ التحميل من تيك توك... يرجى الانتظار.</strong>", parse_mode=ParseMode.HTML)
+    
+    try:
+        response = requests.get(f'{TIKTOK_API}{user_url}', timeout=API_TIMEOUT).json()
         video_url = response.get("video", {}).get("videoURL")
         audio_url = response.get("audioURL")
-        bot.delete_message(message.chat.id, loading_msg.message_id)
-
-        caption_text = f"✅ تم التحميل بواسطة: {CHANNEL_USERNAME}"
+        
+        await bot.delete_message(message.chat.id, loading_msg.message_id)
+        
+        caption_text = f"✅ تم التحميل بواسطة: {CHANNEL_USERNAME}" 
+        
         if video_url:
-            bot.send_video(message.chat.id, video_url, caption=f"<b>{caption_text}</b>", parse_mode="HTML")
+            await message.answer_video(video_url, caption=f'<b>{caption_text}</b>', parse_mode=ParseMode.HTML)
+        
         if audio_url:
-            bot.send_voice(message.chat.id, audio_url, caption=f"<b>🎧 {caption_text}</b>", parse_mode="HTML")
+            await message.answer_voice(audio_url, caption=f'<b>🎧 {caption_text}</b>', parse_mode=ParseMode.HTML)
+            
         if not video_url and not audio_url:
-            bot.send_message(message.chat.id, "❌ لم يتم العثور على محتوى.", parse_mode="HTML")
+             await message.answer("❌ لم يتم العثور على محتوى للتحميل. تأكد من أن الرابط عام.", parse_mode=ParseMode.HTML)
+    
     except Exception as e:
-        print(f"Error TikTok: {e}")
-        if loading_msg:
-            try: bot.delete_message(message.chat.id, loading_msg.message_id)
-            except: pass
-        bot.send_message(message.chat.id, "❌ حدث خطأ أثناء التحميل.", parse_mode="HTML")
-    bot.send_message(message.chat.id, "اضغط على /start للعودة للقائمة الرئيسية.", parse_mode="HTML")
+        logging.error(f"Error in TikTok: {e}")
+        try: await bot.delete_message(message.chat.id, loading_msg.message_id) 
+        except: pass
+        await message.answer("❌ حدث خطأ أثناء التحميل. تأكد من الرابط أو حاول لاحقاً.", parse_mode=ParseMode.HTML)
+        
+    await message.answer("اضغط على الأمر /start للعودة إلى القائمة الرئيسية.", parse_mode=ParseMode.HTML)
 
-def process_instagram_link(message):
+
+async def handle_instagram_link(message: types.Message):
+    """تحميل الفيديو/الصورة من رابط إنستجرام."""
     user_url = message.text
     loading_msg = None
-    if user_url.startswith("/"):
-        bot.send_message(message.chat.id, "❌ تم إلغاء العملية.", parse_mode="HTML")
-        send_welcome(message)
+    
+    if user_url.startswith('/'):
+        await message.answer("❌ تم إلغاء عملية التحميل. اضغط /start للعودة.")
         return
+
+    if not re.match(r'https?://(?:www\.)?instagram\.com/', user_url):
+        await message.answer("<b>❌ الرابط غير صالح!</b> يرجى التأكد من إرسال رابط إنستجرام صحيح.", parse_mode=ParseMode.HTML)
+        await command_start_handler(message) 
+        return
+
+    loading_msg = await message.answer(f"""<strong>⏳ جارٍ التحميل من إنستجرام... يرجى الانتظار.</strong>""", parse_mode=ParseMode.HTML)
+    
     try:
-        if not re.match(r"https?://(?:www\.)?instagram\.com/", user_url):
-            bot.send_message(message.chat.id, "<b>❌ الرابط غير صالح!</b>", parse_mode="HTML")
-            send_welcome(message)
-            return
+        response = requests.get(f"{INSTAGRAM_API}{user_url}", timeout=API_TIMEOUT).json()
+        media_url = response.get('media')
+        
+        await bot.delete_message(message.chat.id, loading_msg.message_id) 
+        
+        caption_text = f"✅ تم التحميل بواسطة: {CHANNEL_USERNAME}" 
 
-        loading_msg = bot.send_message(message.chat.id, "<b>⏳ جارٍ التحميل من إنستجرام...</b>", parse_mode="HTML")
-        response = requests.get(f"{INSTAGRAM_API}{user_url}", timeout=20).json()
-        media_url = response.get("media")
-        bot.delete_message(message.chat.id, loading_msg.message_id)
-
-        caption_text = f"✅ تم التحميل بواسطة: {CHANNEL_USERNAME}"
         if media_url:
-            bot.send_video(message.chat.id, media_url, caption=f"<b>{caption_text}</b>", parse_mode="HTML")
+            await message.answer_video(media_url, caption=f"<b>{caption_text}</b>", parse_mode=ParseMode.HTML)
         else:
-            bot.send_message(message.chat.id, "❌ لم يتم العثور على وسائط.", parse_mode="HTML")
+            await message.answer("❌ لم يتم العثور على وسائط في الرابط. قد يكون الرابط خاصاً أو غير صحيح.", parse_mode=ParseMode.HTML)
+
     except Exception as e:
-        print(f"Error Instagram: {e}")
-        if loading_msg:
-            try: bot.delete_message(message.chat.id, loading_msg.message_id)
-            except: pass
-        bot.send_message(message.chat.id, "❌ حدث خطأ أثناء التحميل.", parse_mode="HTML")
-    bot.send_message(message.chat.id, "اضغط على /start للعودة للقائمة الرئيسية.", parse_mode="HTML")
+        logging.error(f"Error in Instagram: {e}")
+        try: await bot.delete_message(message.chat.id, loading_msg.message_id) 
+        except: pass 
+        await message.answer("❌ حدث خطأ أثناء التحميل. تأكد من الرابط أو حاول لاحقاً.", parse_mode=ParseMode.HTML)
+        
+    await message.answer("اضغط على الأمر /start للعودة إلى القائمة الرئيسية.", parse_mode=ParseMode.HTML)
 
 # ===============================================
-# 6. تشغيل Webhook على Railway مع threaded=True
+#              6. تهيئة Webhook وبدء التشغيل
 # ===============================================
+
+async def on_startup(dispatcher, bot: Bot):
+    """إعداد Webhook عند بدء تشغيل التطبيق."""
+    logging.info("بدء تشغيل AioGram Webhook...")
+    await bot.set_webhook(url=f"{WEBHOOK_URL_BASE}{WEBHOOK_PATH}")
+    logging.info(f"✅ Webhook تم تعيينه إلى: {WEBHOOK_URL_BASE}{WEBHOOK_PATH}")
+
+
+async def on_shutdown(dispatcher, bot: Bot):
+    """تنظيف وإزالة Webhook عند إيقاف التشغيل."""
+    logging.warning("إيقاف تشغيل AioGram...")
+    await bot.delete_webhook()
+    await dispatcher.storage.close()
+    logging.warning("🛑 تم إزالة Webhook.")
+
+
+def main():
+    """تشغيل التطبيق الرئيسي."""
+    try:
+        # تهيئة تطبيق aiohttp كخادم ويب
+        app = web.Application()
+        web.run_app(
+            app,
+            host="0.0.0.0",
+            port=int(os.environ.get('PORT', 8080)),
+            on_startup=[on_startup],
+            on_shutdown=[on_shutdown],
+        )
+        # ربط الـ Webhook مباشرة بالموزع (Dispatcher)
+        app.router.add_post(WEBHOOK_PATH, lambda request: dp.web_hook(request))
+
+    except Exception as e:
+        logging.error(f"فشل تشغيل AioGram Webhook: {e}")
+        sys.exit(1)
+
 
 if __name__ == "__main__":
-    bot.remove_webhook()
-    bot.set_webhook(url=WEBHOOK_URL_BASE + WEBHOOK_URL_PATH)
-    print(f"✅ Webhook مضبوط: {WEBHOOK_URL_BASE + WEBHOOK_URL_PATH}")
-    app.run(host="0.0.0.0", port=WEBHOOK_PORT, threaded=True)
+    main()
