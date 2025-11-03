@@ -5,31 +5,35 @@ import re
 import os # لإدارة المتغيرات البيئية
 
 # ===============================================
+#              0. دالة مساعدة وتأمين النصوص
+# ===============================================
+def escape_markdown_v2(text):
+    """تؤمن النص ليتناسب مع تنسيق MarkdownV2 بتأمين الرموز الخاصة."""
+    # الرموز التي يجب تأمينها في MarkdownV2: _ * [ ] ( ) ~ ` > # + - = | { } . !
+    escape_chars = r'_*[]()~`>#+-=|{}.!'
+    return ''.join('\\' + char if char in escape_chars else char for char in text)
+
+# ===============================================
 #              1. الإعدادات والثوابت
 # ===============================================
 
-# قراءة التوكن من المتغير البيئي (الأكثر أماناً للاستضافة)
+# قراءة التوكن من المتغير البيئي (BOT_TOKEN)
 BOT_TOKEN = os.getenv("BOT_TOKEN") 
 DEVELOPER_USER_ID = "1315011160" # معرف المطور
 CHANNEL_USERNAME = "@SuPeRx1" # اسم قناة البوت أو المطور (للكابشن)
 
-# روابط الـ API الخارجية التي تعتمد عليها وظائف التحميل
 TIKTOK_API = 'https://dev-broksuper.pantheonsite.io/api/e/mp3.php?url='
 INSTAGRAM_API = 'https://dev-broksuper.pantheonsite.io/api/ink.php?url='
 
 # التحقق من وجود التوكن
 if not BOT_TOKEN:
-    print("❌ خطأ: لم يتم تعيين المتغير البيئي BOT_TOKEN. يرجى ضبطه قبل التشغيل.")
-    # يمكنك وضع التوكن مباشرة هنا للاختبار المحلي فقط، لكن يُنصح بتجنب ذلك للنشر.
-    # BOT_TOKEN = "6876095262:AAEwbcucKYON9q7edyFidOrxAJeI8IfhJao" 
-    # في حال النشر، يجب إيقاف التشغيل إذا كان التوكن مفقوداً
-    # exit() 
+    print("❌ خطأ: لم يتم تعيين المتغير البيئي BOT_TOKEN!")
+    exit() 
 
 try:
     bot = telebot.TeleBot(BOT_TOKEN)
 except Exception as e:
-    print(f"❌ فشل تهيئة البوت: {e}")
-    # إذا كان الخطأ بسبب توكن غير صحيح (مثل الخطأ الذي ظهر في الصورة)، سيحدث هذا
+    print(f"❌ فشل تهيئة البوت: تأكد من صحة التوكن. الخطأ: {e}")
     exit()
 
 # ===============================================
@@ -39,6 +43,10 @@ except Exception as e:
 @bot.message_handler(commands=["start"])
 def send_welcome(message):
     """يرسل رسالة الترحيب وقائمة الخيارات."""
+    
+    # تأمين اسم المستخدم لتجنب خطأ 400 في التنسيق
+    safe_first_name = escape_markdown_v2(message.from_user.first_name)
+    
     markup = types.InlineKeyboardMarkup(row_width=2)
     tt_btn = types.InlineKeyboardButton("تحميل تيك توك 🎶", callback_data="download_tiktok")
     ig_btn = types.InlineKeyboardButton("تحميل إنستجرام 📸", callback_data="download_instagram")
@@ -49,12 +57,12 @@ def send_welcome(message):
     bot.send_message(
         message.chat.id,
         f"""
-        **مرحبا بك {message.from_user.first_name}!** 👋
+        **مرحباً بك {safe_first_name}\!** 👋
         
-        أنا بوت التحميل الشامل. اختر المنصة التي تريد التحميل منها:
-        * اختر من القائمة أدناه وأرسل **الرابط فوراً**.
+        أنا بوت التحميل الشامل\. اختر المنصة التي تريد التحميل منها:
+        \* اختر من القائمة أدناه وأرسل **الرابط فوراً**\.
         """,
-        parse_mode='markdown',
+        parse_mode='MarkdownV2',
         reply_markup=markup
     )
 
@@ -73,9 +81,9 @@ def handle_download_choice(call):
         chat_id=call.message.chat.id,
         message_id=call.message.message_id,
         text=f"""
-        **🚀 أرسل رابط فيديو {platform} الآن!**
+        **🚀 أرسل رابط فيديو {platform} الآن\!**
         """,
-        parse_mode='markdown'
+        parse_mode='MarkdownV2'
     )
     
     # تحديد الدالة التي ستتولى معالجة الرسالة التالية (الرابط)
@@ -91,16 +99,24 @@ def handle_download_choice(call):
 def process_tiktok_link(message):
     """تحميل الفيديو والصوت من رابط تيك توك."""
     user_url = message.text
+    loading_msg = None
     
-    if not re.match(r'https?://(?:www\.)?tiktok\.com/', user_url):
-        bot.send_message(message.chat.id, "**❌ الرابط غير صالح!** يرجى التأكد من إرسال رابط تيك توك صحيح.", parse_mode='markdown')
-        # العودة إلى قائمة البداية بعد الخطأ
+    # 1. تحقق من إلغاء العملية
+    if user_url.startswith('/'):
+        bot.send_message(message.chat.id, "❌ تم إلغاء عملية التحميل\. يرجى البدء من جديد واختيار المنصة أولاً\.", parse_mode='MarkdownV2')
         send_welcome(message) 
         return
         
-    loading_msg = bot.send_message(message.chat.id, "<strong>⏳ جارٍ التحميل من تيك توك... يرجى الانتظار.</strong>", parse_mode="html")
-    
     try:
+        # التحقق من صحة الرابط
+        if not re.match(r'https?://(?:www\.)?tiktok\.com/', user_url):
+            bot.send_message(message.chat.id, "**❌ الرابط غير صالح\!** يرجى التأكد من إرسال رابط تيك توك صحيح\.", parse_mode='MarkdownV2')
+            send_welcome(message) 
+            return
+            
+        loading_msg = bot.send_message(message.chat.id, "<strong>⏳ جارٍ التحميل من تيك توك... يرجى الانتظار\.</strong>", parse_mode="html")
+        
+        # الاتصال بـ API
         response = requests.get(f'{TIKTOK_API}{user_url}', timeout=20).json()
         video_url = response.get("video", {}).get("videoURL")
         audio_url = response.get("audioURL")
@@ -108,56 +124,67 @@ def process_tiktok_link(message):
         bot.delete_message(message.chat.id, loading_msg.message_id) # حذف رسالة الانتظار
         
         if video_url:
-            bot.send_video(message.chat.id, video_url, caption=f'**✅ تم تحميل الفيديو بواسطة: {CHANNEL_USERNAME}**', parse_mode='markdown')
+            bot.send_video(message.chat.id, video_url, caption=f'**✅ تم تحميل الفيديو بواسطة: {CHANNEL_USERNAME}**', parse_mode='MarkdownV2')
         
         if audio_url:
-            bot.send_voice(message.chat.id, audio_url, caption=f'**🎧 تم تحميل الصوت بواسطة: {CHANNEL_USERNAME}**', parse_mode='markdown')
+            bot.send_voice(message.chat.id, audio_url, caption=f'**🎧 تم تحميل الصوت بواسطة: {CHANNEL_USERNAME}**', parse_mode='MarkdownV2')
             
         if not video_url and not audio_url:
-             bot.send_message(message.chat.id, "❌ لم يتم العثور على محتوى للتحميل. تأكد من أن الرابط عام.", parse_mode='markdown')
+             bot.send_message(message.chat.id, "❌ لم يتم العثور على محتوى للتحميل\. تأكد من أن الرابط عام\.", parse_mode='MarkdownV2')
     
     except Exception as e:
         print(f"Error in TikTok: {e}")
-        bot.delete_message(message.chat.id, loading_msg.message_id)
-        bot.send_message(message.chat.id, "❌ حدث خطأ أثناء التحميل أو نفذ وقت الاتصال. تأكد من الرابط أو حاول لاحقاً.")
+        if loading_msg:
+             try: bot.delete_message(message.chat.id, loading_msg.message_id) 
+             except: pass 
+        bot.send_message(message.chat.id, "❌ حدث خطأ أثناء التحميل\. تأكد من الرابط أو حاول لاحقاً\.", parse_mode='MarkdownV2')
         
-    # إعادة عرض خيارات البداية بعد الانتهاء
-    send_welcome(message)
+    send_welcome(message) # إعادة عرض خيارات البداية
 
 def process_instagram_link(message):
     """تحميل الفيديو/الصورة من رابط إنستجرام."""
     user_url = message.text
+    loading_msg = None
     
-    if not re.match(r'https?://(?:www\.)?instagram\.com/', user_url):
-        bot.send_message(message.chat.id, "**❌ الرابط غير صالح!** يرجى التأكد من إرسال رابط إنستجرام صحيح.", parse_mode='markdown')
-        send_welcome(message)
+    # 1. تحقق من إلغاء العملية
+    if user_url.startswith('/'):
+        bot.send_message(message.chat.id, "❌ تم إلغاء عملية التحميل\. يرجى البدء من جديد واختيار المنصة أولاً\.", parse_mode='MarkdownV2')
+        send_welcome(message) 
         return
-
-    loading_msg = bot.send_message(message.chat.id, f"""<strong>⏳ جارٍ التحميل من إنستجرام... يرجى الانتظار.</strong>""", parse_mode="html")
-    
+        
     try:
+        if not re.match(r'https?://(?:www\.)?instagram\.com/', user_url):
+            bot.send_message(message.chat.id, "**❌ الرابط غير صالح\!** يرجى التأكد من إرسال رابط إنستجرام صحيح\.", parse_mode='MarkdownV2')
+            send_welcome(message)
+            return
+
+        loading_msg = bot.send_message(message.chat.id, f"""<strong>⏳ جارٍ التحميل من إنستجرام... يرجى الانتظار\.</strong>""", parse_mode="html")
+        
+        # الاتصال بـ API
         response = requests.get(f"{INSTAGRAM_API}{user_url}", timeout=20).json()
         media_url = response.get('media')
         
-        bot.delete_message(message.chat.id, loading_msg.message_id) # حذف رسالة الانتظار
+        bot.delete_message(message.chat.id, loading_msg.message_id) 
 
         if media_url:
-            # افتراض أن الرابط يعطي فيديو، يمكن التعديل لاحقاً للتحقق من نوع الملف إذا دعم الـ API ذلك
-            bot.send_video(message.chat.id, media_url, caption=f"**✅ تم التحميل بواسطة: {CHANNEL_USERNAME}**", parse_mode='markdown')
+            bot.send_video(message.chat.id, media_url, caption=f"**✅ تم التحميل بواسطة: {CHANNEL_USERNAME}**", parse_mode='MarkdownV2')
         else:
-            bot.send_message(message.chat.id, "❌ لم يتم العثور على وسائط في الرابط. قد يكون الرابط خاصاً أو غير صحيح.")
+            bot.send_message(message.chat.id, "❌ لم يتم العثور على وسائط في الرابط\. قد يكون الرابط خاصاً أو غير صحيح\.", parse_mode='MarkdownV2')
 
     except Exception as e:
         print(f"Error in Instagram: {e}")
-        bot.delete_message(message.chat.id, loading_msg.message_id)
-        bot.send_message(message.chat.id, "❌ حدث خطأ أثناء التحميل أو نفذ وقت الاتصال. تأكد من الرابط أو حاول لاحقاً.")
+        if loading_msg:
+             try: bot.delete_message(message.chat.id, loading_msg.message_id) 
+             except: pass 
+        bot.send_message(message.chat.id, "❌ حدث خطأ أثناء التحميل\. تأكد من الرابط أو حاول لاحقاً\.", parse_mode='MarkdownV2')
         
-    # إعادة عرض خيارات البداية بعد الانتهاء
     send_welcome(message)
 
 # ===============================================
 #              5. التشغيل
 # ===============================================
 
-print('🎉 Bot is starting...')
+# رسالة تأكيد التشغيل التي ستظهر في سجلات Railway (Logs)
+print('✅ البوت يعمل الآن بنجاح ويستمع للتحديثات...')
 bot.infinity_polling()
+
