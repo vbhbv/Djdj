@@ -5,6 +5,7 @@ from flask import Flask, request
 import re
 import os
 import sys
+from threading import Thread
 
 # ===============================================
 # 0. الإعدادات الأساسية
@@ -34,16 +35,17 @@ app = Flask(__name__)
 user_states = {}  # key=chat_id, value=platform ('tiktok' أو 'instagram')
 
 # ===============================================
-# 1. Webhook endpoint
+# 1. Webhook endpoint مع Thread
 # ===============================================
 
 @app.route(WEBHOOK_URL_PATH, methods=["POST"])
 def webhook():
-    print("🔔 استلمت طلب Webhook")  # تأكد أن Webhook يستقبل الطلبات
     if request.headers.get("content-type") == "application/json":
         json_string = request.get_data().decode("utf-8")
         update = telebot.types.Update.de_json(json_string)
-        bot.process_new_updates([update])
+        # معالجة التحديث في Thread منفصل
+        Thread(target=lambda: bot.process_new_updates([update])).start()
+        print("🔔 استلمت طلب Webhook")
         return "!", 200
     else:
         return "!", 403
