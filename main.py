@@ -23,22 +23,17 @@ INSTAGRAM_API = 'https://dev-broksuper.pantheonsite.io/api/ink.php?url='
 API_TIMEOUT = 20
 
 if not BOT_TOKEN or not WEBHOOK_URL_BASE:
-    # هذا التحقق ضروري لضمان أن المتغيرات مضبوطة
     print("❌ خطأ: يجب تعيين متغيرات BOT_TOKEN و WEBHOOK_URL بشكل كامل!")
-    # لن نخرج من التطبيق هنا، لأن Gunicorn يتوقع أن يتم تعريف التطبيق
-    
+
 # التهيئة
 try:
     bot = telebot.TeleBot(BOT_TOKEN)
     app = Flask(__name__) # تم تعريف تطبيق Flask
 except Exception as e:
-    # هذا قد يحدث إذا كان التوكن غير صحيح، لكن Gunicorn قد يعترض قبلها
     print(f"❌ فشل تهيئة البوت/Flask. الخطأ: {e}")
-    # لن نخرج من التطبيق، لكن سنترك Gunicorn يشغله ليرى الخطأ بوضوح
-    # sys.exit(1)
 
 # ===============================================
-#              1. نقاط وصول Webhook
+#              1. نقاط وصول Webhook (تم التعديل)
 # ===============================================
 
 @app.route(WEBHOOK_URL_PATH, methods=['POST'])
@@ -46,11 +41,15 @@ def webhook():
     """نقطة النهاية التي يستقبل منها البوت تحديثات تيليجرام."""
     if request.headers.get('content-type') == 'application/json':
         json_string = request.get_data().decode('utf-8')
+        
+        # معالجة الرسالة
         update = telebot.types.Update.de_json(json_string)
         bot.process_new_updates([update])
-        return '!', 200 # رد فوري بنجاح الاستقبال
+        
+        # الرد بأسرع طريقة ممكنة لضمان عدم حدوث تأخير في Webhook
+        return '', 200 
     else:
-        return '!', 403
+        return 'Error', 403
 
 # ===============================================
 #              2. معالجة الأوامر الرئيسية (HTML)
@@ -65,7 +64,6 @@ def send_welcome(message):
     markup = types.InlineKeyboardMarkup(row_width=2)
     tt_btn = types.InlineKeyboardButton("تحميل تيك توك 🎶", callback_data="download_tiktok")
     ig_btn = types.InlineKeyboardButton("تحميل إنستجرام 📸", callback_data="download_instagram")
-    # استخدام tg://user?id لزر المطور
     dev_btn = types.InlineKeyboardButton("المطور 👨‍💻", url=f"tg://user?id={DEVELOPER_USER_ID}") 
     
     markup.add(tt_btn, ig_btn, dev_btn)
@@ -185,7 +183,7 @@ def process_instagram_link(message):
 
 
 # ===============================================
-#              4. تهيئة Webhook
+#              4. تهيئة Webhook (لـ Gunicorn)
 # ===============================================
 
 # يتم وضع هذا الكود في نهاية الملف لتهيئة Webhook، بينما يقوم Gunicorn بالتشغيل.
