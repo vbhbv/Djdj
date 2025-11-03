@@ -20,12 +20,12 @@ WEBHOOK_URL_BASE = os.getenv("WEBHOOK_URL")
 WEBHOOK_PATH = f'/{BOT_TOKEN}'
 
 # إعدادات ثابتة
-DEVELOPER_USER_ID = 1315011160 # تم تحويله إلى رقم لـ aiogram
+DEVELOPER_USER_ID = 1315011160
 CHANNEL_USERNAME = "@SuPeRx1"
 
 TIKTOK_API = 'https://dev-broksuper.pantheonsite.io/api/e/mp3.php?url='
 INSTAGRAM_API = 'https://dev-broksuper.pantheonsite.io/api/ink.php?url='
-API_TIMEOUT = 25 # زيادة المهلة الزمنية للتحميل
+API_TIMEOUT = 25 
 
 # التحقق من المتغيرات
 if not BOT_TOKEN or not WEBHOOK_URL_BASE:
@@ -39,7 +39,8 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(
 #              1. تهيئة البوت والموزع (Dispatcher)
 # ===============================================
 
-bot = Bot(token=BOT_TOKEN, parse_mode=ParseMode.HTML) # استخدام HTML افتراضياً
+# استخدام ParseMode.HTML افتراضياً لضمان الثبات
+bot = Bot(token=BOT_TOKEN, parse_mode=ParseMode.HTML) 
 dp = Dispatcher()
 
 # ===============================================
@@ -83,26 +84,26 @@ async def command_start_handler(message: types.Message):
 # ===============================================
 
 @dp.callback_query(F.data == "download_tiktok")
-async def process_tiktok_choice(callback: types.CallbackQuery, state: F.data):
+async def process_tiktok_choice(callback: types.CallbackQuery):
     """معالجة اختيار تحميل تيك توك."""
     await callback.message.edit_text(
         "<b>🚀 أرسل رابط فيديو تيك توك الآن!</b>",
         parse_mode=ParseMode.HTML
     )
     # تسجيل الخطوة التالية (aiogram يستخدم طريقة مختلفة لانتظار الرسالة)
-    dp.message.register(handle_tiktok_link, F.text, callback_data=callback.data)
-    await callback.answer() # إغلاق إشعار الزر
+    dp.message.register(handle_tiktok_link, F.text)
+    await callback.answer()
 
 @dp.callback_query(F.data == "download_instagram")
-async def process_instagram_choice(callback: types.CallbackQuery, state: F.data):
+async def process_instagram_choice(callback: types.CallbackQuery):
     """معالجة اختيار تحميل إنستجرام."""
     await callback.message.edit_text(
         "<b>🚀 أرسل رابط فيديو إنستجرام الآن!</b>",
         parse_mode=ParseMode.HTML
     )
     # تسجيل الخطوة التالية
-    dp.message.register(handle_instagram_link, F.text, callback_data=callback.data)
-    await callback.answer() # إغلاق إشعار الزر
+    dp.message.register(handle_instagram_link, F.text)
+    await callback.answer()
 
 
 # ===============================================
@@ -189,38 +190,30 @@ async def handle_instagram_link(message: types.Message):
     await message.answer("اضغط على الأمر /start للعودة إلى القائمة الرئيسية.", parse_mode=ParseMode.HTML)
 
 # ===============================================
-#              6. تهيئة Webhook وبدء التشغيل
+#              6. تهيئة Webhook وبدء التشغيل (المُعدَّل لـ aiohttp)
 # ===============================================
 
-async def on_startup(dispatcher, bot: Bot):
+async def on_startup(bot: Bot):
     """إعداد Webhook عند بدء تشغيل التطبيق."""
     logging.info("بدء تشغيل AioGram Webhook...")
     await bot.set_webhook(url=f"{WEBHOOK_URL_BASE}{WEBHOOK_PATH}")
     logging.info(f"✅ Webhook تم تعيينه إلى: {WEBHOOK_URL_BASE}{WEBHOOK_PATH}")
 
-
-async def on_shutdown(dispatcher, bot: Bot):
-    """تنظيف وإزالة Webhook عند إيقاف التشغيل."""
-    logging.warning("إيقاف تشغيل AioGram...")
-    await bot.delete_webhook()
-    await dispatcher.storage.close()
-    logging.warning("🛑 تم إزالة Webhook.")
-
-
 def main():
     """تشغيل التطبيق الرئيسي."""
     try:
-        # تهيئة تطبيق aiohttp كخادم ويب
-        app = web.Application()
-        web.run_app(
-            app,
+        # قراءة المنفذ من متغيرات بيئة Railway
+        PORT = int(os.environ.get('PORT', 8080))
+        
+        # ربط دالة on_startup يدوياً
+        dp.startup.register(on_startup)
+        
+        # تشغيل البوت في وضع Webhook باستخدام البنية الصحيحة لـ aiohttp
+        dp.run_app(
+            web.Application(),
             host="0.0.0.0",
-            port=int(os.environ.get('PORT', 8080)),
-            on_startup=[on_startup],
-            on_shutdown=[on_shutdown],
+            port=PORT,
         )
-        # ربط الـ Webhook مباشرة بالموزع (Dispatcher)
-        app.router.add_post(WEBHOOK_PATH, lambda request: dp.web_hook(request))
 
     except Exception as e:
         logging.error(f"فشل تشغيل AioGram Webhook: {e}")
